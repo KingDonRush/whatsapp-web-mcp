@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "whatsapp-web-mcp"
+version = "0.1.0"
+description = "WhatsApp Web MCP server for structured exports, media capture, WhisperX transcription and confirmation-gated sending."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+authors = [
+  { name = "KingDonRush" }
+]
+keywords = ["mcp", "whatsapp", "whatsapp-web", "playwright", "whisperx"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+]
+dependencies = [
+  "mcp>=1.27,<2",
+  "playwright>=1.60,<2",
+]
+
+[project.optional-dependencies]
+transcription = [
+  "whisperx>=3.8,<4",
+]
+
+[project.scripts]
+whatsapp-web-mcp = "server:main"
+
+[project.urls]
+Homepage = "https://github.com/KingDonRush/whatsapp-web-mcp"
+Repository = "https://github.com/KingDonRush/whatsapp-web-mcp"
+Issues = "https://github.com/KingDonRush/whatsapp-web-mcp/issues"
+
+[tool.setuptools]
+py-modules = ["server"]
+
+[tool.setuptools.packages.find]
+include = ["whatsapp_web_mcp*"]

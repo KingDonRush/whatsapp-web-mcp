@@ -1,0 +1,33 @@
+.agentic-ops/
+.env
+.env.*
+!.env.example
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+build/
+dist/
+
+# Runtime data may contain authenticated browser sessions, WhatsApp content,
+# QR screenshots, pending-send tokens and exported media.
+state/
+runtime/
+exports/
+transcripts/
+browser-profiles/
+browser-artifacts/
+pending-sends/
+
+# Local IDE, dependency and operating-system files.
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*

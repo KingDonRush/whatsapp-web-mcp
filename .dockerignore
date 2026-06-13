@@ -1,0 +1,13 @@
+.git
+.github
+.agentic-ops
+.venv
+__pycache__
+*.pyc
+.env
+state
+runtime
+exports
+transcripts
+tests
+node_modules
