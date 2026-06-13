@@ -15,6 +15,7 @@ from whatsapp_web_mcp.web_dispatch import (
     media_menu_labels_for_item,
     reply_preview_matches,
     reply_target_snippets,
+    send_media_item,
     unsupported_dispatch_items,
 )
 
@@ -190,6 +191,7 @@ class SendProtocolTests(unittest.TestCase):
                 self.assertFalse(confirmed["sent"])
                 self.assertEqual(confirmed["browser_policy"]["browser_mode"], "headless")
                 self.assertEqual(confirmed["dispatch"]["qr_artifact"]["file_path"], "/tmp/qr.png")
+                self.assertTrue(pending_file.exists())
 
     def test_web_dispatch_blocks_unverified_media_and_forwarded_items(self) -> None:
         unsupported = unsupported_dispatch_items(
@@ -198,6 +200,7 @@ class SendProtocolTests(unittest.TestCase):
                 {"type": "text", "text": "Resposta", "reply_to": {"preview_text": "Mensagem original"}},
                 {"type": "image", "file_path": "/tmp/foto.jpg"},
                 {"type": "audio_document", "file_path": "/tmp/audio.mp3", "send_as_document": True},
+                {"type": "document", "file_path": "/tmp/arquivo.zip"},
                 {"type": "forwarded", "source_message_id": "abc"},
             ]
         )
@@ -261,12 +264,115 @@ class SendProtocolTests(unittest.TestCase):
         self.assertFalse(confirmed["sent"])
         self.assertEqual(confirmed["dispatch"]["timeout_scope"], "dispatch")
 
+    def test_successful_dispatch_consumes_confirmation_token(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch.object(send_protocol, "pending_send_dir", return_value=root):
+                prepared = send_protocol.prepare_send_message(
+                    recipient_name="Grupo",
+                    message_text="Mensagem de teste",
+                    user_order_text="envie essa mensagem",
+                )
+                token = prepared["token"]
+                pending_file = root / f"{token}.json"
+
+                with patch(
+                    "whatsapp_web_mcp.send_protocol.dispatch_pending_send_async",
+                    AsyncMock(
+                        return_value={
+                            "schema": "whatsapp.web.dispatch.v1",
+                            "status": "sent",
+                            "sent": True,
+                        }
+                    ),
+                ):
+                    confirmed = send_protocol.confirm_send_message(
+                        token,
+                        confirmation_text=f"CONFIRMO ENVIAR {token}",
+                        user_already_confirmed=True,
+                        dispatch=True,
+                    )
+
+                pending_exists_after = pending_file.exists()
+                replay = send_protocol.confirm_send_message(
+                    token,
+                    confirmation_text=f"CONFIRMO ENVIAR {token}",
+                    user_already_confirmed=True,
+                    dispatch=True,
+                )
+
+        self.assertTrue(confirmed["sent"])
+        self.assertTrue(confirmed["token_consumed"])
+        self.assertFalse(pending_exists_after)
+        self.assertEqual(replay["status"], "blocked_unknown_token")
+        self.assertFalse(replay["sent"])
+
 
 if __name__ == "__main__":
     unittest.main()
 
 
 class WebDispatchTimeoutTests(unittest.IsolatedAsyncioTestCase):
+    async def test_dispatch_routes_verified_document_to_media_sender(self) -> None:
+        with patch(
+            "whatsapp_web_mcp.web_dispatch.open_browser_session_async",
+            AsyncMock(return_value={"status": "opened"}),
+        ), patch(
+            "whatsapp_web_mcp.web_dispatch.get_browser_page",
+            return_value=object(),
+        ), patch(
+            "whatsapp_web_mcp.web_dispatch.is_login_required",
+            AsyncMock(return_value=False),
+        ), patch(
+            "whatsapp_web_mcp.web_dispatch.select_chat",
+            AsyncMock(return_value={"status": "selected"}),
+        ), patch(
+            "whatsapp_web_mcp.web_dispatch.send_media_item",
+            AsyncMock(
+                return_value={
+                    "type": "document",
+                    "filename": "arquivo.zip",
+                    "dispatch_evidence": {"status": "preview_closed"},
+                }
+            ),
+        ) as media_sender:
+            result = await dispatch_pending_send_async(
+                {
+                    "recipient": {"name": "Grupo"},
+                    "send_items": [{"type": "document", "file_path": "/tmp/arquivo.zip"}],
+                    "content_sha256": "abc",
+                },
+                timeout_ms=1000,
+            )
+
+        self.assertEqual(result["status"], "sent")
+        self.assertTrue(result["sent"])
+        media_sender.assert_awaited_once()
+
+    async def test_send_media_item_requires_preview_to_close_after_submit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            document = Path(tmp) / "arquivo.zip"
+            document.write_bytes(b"zip fixture")
+            page = AsyncMock()
+            with patch(
+                "whatsapp_web_mcp.web_dispatch.attach_media_preview",
+                AsyncMock(return_value={"status": "preview_ready"}),
+            ), patch(
+                "whatsapp_web_mcp.web_dispatch.submit_current_message",
+                AsyncMock(),
+            ), patch(
+                "whatsapp_web_mcp.web_dispatch.wait_for_media_dispatch_completion",
+                AsyncMock(return_value={"status": "preview_closed", "remaining_send_controls": 0}),
+            ) as completion:
+                result = await send_media_item(
+                    page,
+                    {"type": "document", "file_path": str(document)},
+                    timeout_ms=1000,
+                )
+
+        self.assertEqual(result["dispatch_evidence"]["status"], "preview_closed")
+        completion.assert_awaited_once_with(page, timeout_ms=1000)
+
     async def test_dispatch_returns_timeout_instead_of_hanging_on_chat_selection(self) -> None:
         async def slow_select(*args, **kwargs):
             await asyncio.sleep(2)

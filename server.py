@@ -148,7 +148,7 @@ def whatsapp_capabilities() -> dict[str, Any]:
         "send_contract": {
             "sendable_message_types": list(SENDABLE_MESSAGE_TYPES),
             "payload_field": "send_items",
-            "dispatch_verified_types": ["text"],
+            "dispatch_verified_types": ["text", "document"],
             "non_sending_probe_tools": ["whatsapp_probe_send_media", "whatsapp_probe_reply_to_message"],
             "non_sending_probe_verified_types": ["image", "document", "audio"],
             "reply_probe": {
@@ -158,15 +158,18 @@ def whatsapp_capabilities() -> dict[str, Any]:
                 "dispatch_status": "blocked_until_token_confirmed_send_smoke",
             },
             "media_file_policy": (
-                "media payloads are normalized during prepare, but media dispatch is blocked until "
-                "the WhatsApp Web attachment flow passes real smoke validation without hanging"
+                "document dispatch, including ZIP files, is verified through WhatsApp Web; other "
+                "media types remain blocked until their own real smoke validation passes"
             ),
             "unsupported_dispatch": [
-                "image/sticker/gif/audio/audio_document/video/document media dispatch not verified after Web UI smoke",
+                "image/sticker/gif/audio/audio_document/video dispatch not verified after Web UI smoke",
                 "reply_to native reply dispatch not verified after token-confirmed Web UI smoke",
                 "forwarded existing messages by source_message_id/source_record_id",
             ],
-            "confirmation_policy": "prepare requires explicit send intent; confirm requires confirmation_text exactly 'CONFIRMO ENVIAR <token>'",
+            "confirmation_policy": (
+                "prepare requires explicit send intent; confirm requires confirmation_text exactly "
+                "'CONFIRMO ENVIAR <token>'; a successful dispatch consumes the token"
+            ),
             "default_dispatch_timeout_seconds": DEFAULT_CONFIRM_DISPATCH_TIMEOUT_SECONDS,
         },
         "browser_policy": {

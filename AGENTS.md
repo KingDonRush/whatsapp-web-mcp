@@ -13,10 +13,13 @@
 9. Never send from a search, export, probe or draft request.
 10. Sending requires explicit intent, prepare, preview and exact token confirmation.
 11. Do not bypass the confirmation gate, including in test chats.
-12. Dispatch support is currently verified only for plain text.
+12. Dispatch support is currently verified for plain text and documents,
+    including ZIP files.
 13. Media and reply probes must cancel without sending and return `sent=false`.
-14. Keep media, reply and forwarding dispatch blocked until their own confirmed
-    Web UI smoke has passed.
+14. Keep other media, reply and forwarding dispatch blocked until their own
+    confirmed Web UI smoke has passed.
+15. Consume a confirmation token after a successful dispatch so it cannot be
+    replayed. Preserve it after failures so the user can explicitly retry.
 
 ## Validation
 

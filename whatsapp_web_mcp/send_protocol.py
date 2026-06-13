@@ -372,6 +372,15 @@ async def confirm_send_message_async(
         }
     if dispatch:
         timeout_seconds = max(1, int(dispatch_timeout_seconds or DEFAULT_CONFIRM_DISPATCH_TIMEOUT_SECONDS))
+        claimed_path = path.with_suffix(".dispatching")
+        try:
+            path.replace(claimed_path)
+        except FileNotFoundError:
+            return {
+                "schema": "whatsapp.send.confirm.v1",
+                "status": "blocked_unknown_or_claimed_token",
+                "sent": False,
+            }
         try:
             dispatch_result = await asyncio.wait_for(
                 dispatch_pending_send_async(
@@ -390,14 +399,40 @@ async def confirm_send_message_async(
                 "timeout_seconds": timeout_seconds,
                 "content_sha256": payload.get("content_sha256"),
             }
-        return {
+        except Exception as exc:
+            dispatch_result = {
+                "schema": "whatsapp.web.dispatch.v1",
+                "status": "blocked_dispatch_failed",
+                "sent": False,
+                "error": f"{type(exc).__name__}: {exc}",
+                "content_sha256": payload.get("content_sha256"),
+            }
+
+        token_consumed = bool(dispatch_result.get("sent"))
+        token_cleanup_warning = None
+        if token_consumed:
+            try:
+                claimed_path.unlink(missing_ok=True)
+            except OSError as exc:
+                token_cleanup_warning = f"{type(exc).__name__}: {exc}"
+        else:
+            try:
+                claimed_path.replace(path)
+            except OSError as exc:
+                token_cleanup_warning = f"{type(exc).__name__}: {exc}"
+
+        response = {
             "schema": "whatsapp.send.confirm.v1",
             "status": "sent" if dispatch_result.get("sent") else dispatch_result.get("status", "blocked_dispatch_failed"),
             "sent": bool(dispatch_result.get("sent")),
+            "token_consumed": token_consumed,
             "browser_policy": browser_policy,
             "pending": payload,
             "dispatch": dispatch_result,
         }
+        if token_cleanup_warning:
+            response["token_cleanup_warning"] = token_cleanup_warning
+        return response
     return {
         "schema": "whatsapp.send.confirm.v1",
         "status": "confirmed_not_dispatched",

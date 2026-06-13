@@ -30,9 +30,10 @@ WhisperX.
 | Exportar conversa e metadados | Suportado |
 | Exportar/transcrever áudio e vídeo | Suportado quando mídia e WhisperX estão disponíveis |
 | Enviar texto | Verificado, sempre com confirmação |
+| Enviar documentos, incluindo `.zip` | Verificado, sempre com confirmação |
 | Preview de imagem/documento/áudio | Verificado sem envio |
 | Reply nativo | Preview verificado sem envio |
-| Enviar mídia, reply ou encaminhamento | Bloqueado até smoke específico com confirmação |
+| Enviar outras mídias, reply ou encaminhamento | Bloqueado até smoke específico com confirmação |
 | SQLite/IndexedDB local | Não utilizado |
 
 ## Requisitos

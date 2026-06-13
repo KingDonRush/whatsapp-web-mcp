@@ -11,7 +11,7 @@ from .browser_policy import (
     open_browser_session_async,
 )
 
-VERIFIED_DISPATCH_TYPES = {"text"}
+VERIFIED_DISPATCH_TYPES = {"text", "document"}
 MEDIA_DISPATCH_TYPES = {"image", "sticker", "gif", "audio", "audio_document", "video", "document"}
 MEDIA_DISPATCH_BLOCK_REASON = (
     "media_dispatch_not_verified_after_web_ui_smoke; prepare accepts this payload, "
@@ -85,7 +85,7 @@ def unsupported_dispatch_items(send_items: list[dict[str, Any]]) -> list[dict[st
                     "reason": "forwarding_existing_messages_requires_dedicated_message_selection_flow",
                 }
             )
-        elif kind in MEDIA_DISPATCH_TYPES:
+        elif kind in MEDIA_DISPATCH_TYPES and kind not in VERIFIED_DISPATCH_TYPES:
             unsupported.append(
                 {
                     "index": index,
@@ -854,6 +854,23 @@ async def visible_media_send_control_count(page: Any) -> int:
     )
 
 
+async def wait_for_media_dispatch_completion(page: Any, timeout_ms: int) -> dict[str, Any]:
+    deadline = asyncio.get_running_loop().time() + (max(timeout_ms, 1) / 1000)
+    remaining = await visible_media_send_control_count(page)
+    while remaining > 0 and asyncio.get_running_loop().time() < deadline:
+        await page.wait_for_timeout(150)
+        remaining = await visible_media_send_control_count(page)
+    if remaining > 0:
+        raise RuntimeError(
+            "WhatsApp Web media preview remained open after the send action; "
+            "dispatch completion could not be verified"
+        )
+    return {
+        "status": "preview_closed",
+        "remaining_send_controls": remaining,
+    }
+
+
 async def close_media_preview(page: Any, timeout_ms: int) -> dict[str, Any]:
     await page.keyboard.press("Escape")
     await page.wait_for_timeout(500)
@@ -988,13 +1005,14 @@ async def send_media_item(page: Any, item: dict[str, Any], timeout_ms: int) -> d
         if caption_box is not None:
             await page.keyboard.type(caption.strip(), delay=10)
     await submit_current_message(page, timeout_ms=timeout_ms)
-    await page.wait_for_timeout(1500)
+    dispatch_evidence = await wait_for_media_dispatch_completion(page, timeout_ms=timeout_ms)
     return {
         "type": item_type,
         "file_path": str(file_path),
         "filename": item.get("filename") or file_path.name,
         "caption_sent": bool(isinstance(caption, str) and caption.strip()),
         "attach_result": attach_result,
+        "dispatch_evidence": dispatch_evidence,
     }
 
 
