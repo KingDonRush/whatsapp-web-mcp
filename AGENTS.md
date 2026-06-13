@@ -1,25 +1,55 @@
 # WhatsApp Web MCP Agent Instructions
 
-## Operational contract
+## Public API
 
-1. Use WhatsApp Web through the persistent Playwright profile.
-2. Do not read SQLite, IndexedDB snapshots or desktop-wrapper databases.
-3. Prefer DOM/accessibility extraction. Screenshots are diagnostic artifacts.
-4. Treat browser profiles, QR images, exports and pending sends as sensitive.
-5. Default to headless. Use headed only for the operation requested by the user.
-6. Use WhisperX as the transcription backend. Video is converted to audio first.
-7. Never associate captured media with a message unless the match is reliable.
-8. Keep unmatched captures in `unassigned_media_captures`.
-9. Never send from a search, export, probe or draft request.
-10. Sending requires explicit intent, prepare, preview and exact token confirmation.
-11. Do not bypass the confirmation gate, including in test chats.
-12. Dispatch support is currently verified for plain text and documents,
-    including ZIP files.
-13. Media and reply probes must cancel without sending and return `sent=false`.
-14. Keep other media, reply and forwarding dispatch blocked until their own
-    confirmed Web UI smoke has passed.
-15. Consume a confirmation token after a successful dispatch so it cannot be
-    replayed. Preserve it after failures so the user can explicitly retry.
+Use somente:
+
+- `whatsapp_status`
+- `whatsapp_list_chats`
+- `whatsapp_get_messages`
+- `whatsapp_get_media`
+- `whatsapp_export_chat`
+- `whatsapp_transcribe_file`
+- `whatsapp_prepare_action`
+- `whatsapp_confirm_action`
+- `whatsapp_action_status`
+
+Todas as chamadas recebem um objeto `request`.
+
+## Domain Contract
+
+1. Ask for chats, messages, media, exports, transcriptions or actions as domain
+   data. Do not manage browser sessions, selectors, scroll pages or UI state.
+2. Never use an external Playwright/browser/computer-use tool to compensate for
+   an MCP read failure. Return the short domain error and `diagnostics_id`.
+3. Do not expose DOM, composer, persisted position, browser profile, Playwright
+   or recovery mechanics to the user.
+4. Use `whatsapp_status` first when authentication state is unknown.
+5. Use `whatsapp_list_chats` to resolve ambiguity, then prefer `chat_id`.
+6. For recent messages, trust `latest_boundary_verified`; pagination uses only
+   the opaque `next_cursor`.
+7. Reads never send, clear or replace user drafts.
+8. Default operation mode is headless. Set `observe=true` only for the current
+   operation when the user asks to watch it.
+9. Use `whatsapp_get_media` with the exact `chat_id` and `message_id`. Never
+   guess media associations.
+10. Use WhisperX only. Videos are converted to audio before transcription.
+11. Treat browser profiles, QR artifacts, exports, media and action files as
+    sensitive.
+
+## Sending
+
+1. Sending requires an explicit user order.
+2. Call `whatsapp_prepare_action` and show its preview.
+3. Do not call `whatsapp_confirm_action` until the user literally confirms
+   `CONFIRMO ENVIAR <action_id>`.
+4. Pass `user_confirmed=true` only after that confirmation.
+5. Never infer confirmation from approval of a draft, file, plan or recipient.
+6. Never retry a send automatically when its outcome is ambiguous.
+7. Text and documents, including ZIP files, are currently verified.
+8. Other media, reply and forwarding remain blocked until their own confirmed
+   WhatsApp Web smoke passes.
+9. A successful action is consumed atomically and must not be replayed.
 
 ## Validation
 

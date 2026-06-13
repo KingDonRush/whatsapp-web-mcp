@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, patch
 
 from whatsapp_web_mcp.web_collect import (
     attach_captured_files_to_messages,
+    capture_inline_media_for_message,
     capture_media_for_messages,
     chat_structure_from_messages,
     collect_messages_with_history,
@@ -30,7 +31,7 @@ from whatsapp_web_mcp.web_collect import (
 )
 
 
-class WebCollectContractTests(unittest.TestCase):
+class WebCollectContractTests(unittest.IsolatedAsyncioTestCase):
     def test_contact_payload_normalizes_visible_chat_rows(self) -> None:
         contact = normalize_contact_payload(
             {
@@ -65,6 +66,25 @@ class WebCollectContractTests(unittest.TestCase):
         self.assertEqual(message["media"]["semantic_category"], "audio")
         self.assertTrue(message_matches_filters(message, normalize_filters(["audio", "text"])))
 
+    def test_message_payload_classifies_sticker_from_media_alt(self) -> None:
+        message = normalize_message_payload(
+            {
+                "id": "sticker-1",
+                "direction": "outgoing",
+                "text": "14:41",
+                "media": [
+                    {
+                        "kind": "image",
+                        "alt": "Figurinha sem etiqueta",
+                        "src": "blob:https://web.whatsapp.com/sticker",
+                    }
+                ],
+            }
+        )
+
+        self.assertEqual(message["type"], "sticker")
+        self.assertEqual(message["media"]["semantic_category"], "sticker")
+
     def test_chat_structure_groups_messages_by_visible_hour_when_iso_missing(self) -> None:
         messages = [
             normalize_message_payload({"id": "1", "direction": "incoming", "text": "Oi\n09:10"}),
@@ -90,6 +110,26 @@ class WebCollectContractTests(unittest.TestCase):
             self.assertIsNotNone(file_path)
             self.assertEqual(Path(file_path).read_bytes(), b"Hello")
 
+    async def test_capture_inline_media_for_message_is_scoped_to_message(self) -> None:
+        page = AsyncMock()
+        page.evaluate.return_value = [
+            {
+                "data_url": "data:image/webp;base64,SGVsbG8=",
+                "mimetype": "image/webp",
+                "size": 5,
+            }
+        ]
+        message = {"message_id": "msg-1", "dom_index": 4, "type": "image"}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            captures = await capture_inline_media_for_message(page, Path(tmp), message)
+
+            self.assertEqual(len(captures), 1)
+            self.assertEqual(captures[0]["trigger_message_id"], "msg-1")
+            self.assertEqual(captures[0]["category"], "image")
+            self.assertEqual(captures[0]["size_bytes"], 5)
+            self.assertEqual(Path(captures[0]["file_path"]).read_bytes(), b"Hello")
+
     def test_captured_media_attaches_to_matching_message_category(self) -> None:
         messages = [
             normalize_message_payload(
@@ -110,6 +150,34 @@ class WebCollectContractTests(unittest.TestCase):
         self.assertEqual(messages[0]["media"]["items"][0]["downloaded_file"], "/tmp/audio.ogg")
         self.assertEqual(extension_for_mimetype("audio/ogg"), ".ogg")
         self.assertEqual(media_category_for_mimetype("video/mp4"), "video")
+
+    def test_image_capture_attaches_to_sticker_and_propagates_metadata(self) -> None:
+        messages = [
+            normalize_message_payload(
+                {
+                    "id": "sticker-1",
+                    "text": "14:41",
+                    "media": [{"kind": "image", "alt": "Figurinha sem etiqueta"}],
+                }
+            )
+        ]
+
+        remaining = attach_captured_files_to_messages(
+            messages,
+            [
+                {
+                    "category": "image",
+                    "file_path": "/tmp/sticker.webp",
+                    "mimetype": "image/webp",
+                }
+            ],
+        )
+
+        self.assertEqual(remaining, [])
+        self.assertEqual(messages[0]["media"]["downloaded_file"], "/tmp/sticker.webp")
+        self.assertEqual(messages[0]["media"]["mimetype"], "image/webp")
+        self.assertEqual(messages[0]["media"]["filename"], "sticker.webp")
+        self.assertEqual(messages[0]["media"]["items"][0]["downloaded_file"], "/tmp/sticker.webp")
 
     def test_captured_media_does_not_attach_to_wrong_category(self) -> None:
         messages = [
@@ -267,6 +335,9 @@ class WebCollectHistoryLoopTests(unittest.IsolatedAsyncioTestCase):
         )
         with tempfile.TemporaryDirectory() as tmp:
             with patch(
+                "whatsapp_web_mcp.web_collect.capture_inline_media_for_message",
+                AsyncMock(return_value=[]),
+            ), patch(
                 "whatsapp_web_mcp.web_collect.capture_network_media_for_message",
                 AsyncMock(
                     return_value=[

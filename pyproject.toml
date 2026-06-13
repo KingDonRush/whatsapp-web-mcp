@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "whatsapp-web-mcp"
-version = "0.1.0"
-description = "WhatsApp Web MCP server for structured exports, media capture, WhisperX transcription and confirmation-gated sending."
+version = "0.2.0"
+description = "Domain-oriented WhatsApp MCP for chats, messages, media and confirmation-gated actions."
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"

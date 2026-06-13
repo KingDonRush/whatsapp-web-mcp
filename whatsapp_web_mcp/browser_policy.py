@@ -367,6 +367,18 @@ def get_browser_page(session_id: str | None = "default") -> Any | None:
     return session.get("page") if session else None
 
 
+def get_browser_session_info(session_id: str | None = "default") -> dict[str, Any] | None:
+    session = _SESSIONS.get(_safe_session_id(session_id))
+    if not session:
+        return None
+    return {
+        "browser_mode": session.get("browser_mode"),
+        "profile_dir": session.get("profile_dir"),
+        "url": session.get("url"),
+        "auth_state": session.get("auth_state"),
+    }
+
+
 def _validate_whatsapp_url(url: str) -> str:
     parsed = urlparse(url)
     if parsed.scheme != "https" or parsed.netloc != "web.whatsapp.com":

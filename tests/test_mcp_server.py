@@ -15,7 +15,7 @@ SERVER_PYTHON = sys.executable
 
 
 class MCPServerTests(unittest.TestCase):
-    def test_server_lists_expected_tools(self) -> None:
+    def test_server_exposes_only_domain_tools(self) -> None:
         async def run() -> dict[str, dict]:
             params = StdioServerParameters(command=SERVER_PYTHON, args=[SERVER_PATH])
             async with stdio_client(params) as (read, write):
@@ -25,48 +25,34 @@ class MCPServerTests(unittest.TestCase):
                     return {tool.name: tool.inputSchema for tool in tools.tools}
 
         schemas = asyncio.run(run())
-        names = sorted(schemas)
-
         expected = {
-            "whatsapp_capabilities",
-            "whatsapp_browser_policy",
-            "whatsapp_browser_runtime_status",
-            "whatsapp_browser_open",
-            "whatsapp_browser_close",
-            "whatsapp_set_browser_policy",
-            "whatsapp_sources",
-            "whatsapp_automated_search_plan",
-            "whatsapp_find_contacts",
-            "whatsapp_select_context",
-            "whatsapp_search_messages",
-            "whatsapp_chat_structure",
-            "whatsapp_export_conversation",
+            "whatsapp_status",
+            "whatsapp_list_chats",
+            "whatsapp_get_messages",
+            "whatsapp_get_media",
+            "whatsapp_export_chat",
             "whatsapp_transcribe_file",
-            "whatsapp_prepare_send_message",
-            "whatsapp_confirm_send_message",
-            "whatsapp_probe_send_media",
-            "whatsapp_probe_reply_to_message",
+            "whatsapp_prepare_action",
+            "whatsapp_confirm_action",
+            "whatsapp_action_status",
         }
-        self.assertTrue(expected.issubset(set(names)))
-        self.assertTrue(all(name.startswith("whatsapp_") for name in names))
+
+        self.assertEqual(set(schemas), expected)
         for schema in schemas.values():
-            self.assertNotIn("db_path", schema.get("properties", {}))
-        self.assertIn("browser_mode", schemas["whatsapp_find_contacts"]["properties"])
-        self.assertIn("browser_mode", schemas["whatsapp_search_messages"]["properties"])
-        self.assertIn("browser_mode", schemas["whatsapp_export_conversation"]["properties"])
-        self.assertIn("browser_mode", schemas["whatsapp_automated_search_plan"]["properties"])
-        self.assertIn("send_items", schemas["whatsapp_prepare_send_message"]["properties"])
-        self.assertIn("browser_mode", schemas["whatsapp_prepare_send_message"]["properties"])
-        self.assertIn("browser_mode", schemas["whatsapp_confirm_send_message"]["properties"])
-        self.assertIn("dispatch_timeout_seconds", schemas["whatsapp_confirm_send_message"]["properties"])
-        self.assertIn("send_item", schemas["whatsapp_probe_send_media"]["properties"])
-        self.assertIn("browser_mode", schemas["whatsapp_probe_send_media"]["properties"])
-        self.assertIn("reply_to", schemas["whatsapp_probe_reply_to_message"]["properties"])
-        self.assertIn("browser_mode", schemas["whatsapp_probe_reply_to_message"]["properties"])
-        transcribe_properties = schemas["whatsapp_transcribe_file"]["properties"]
-        self.assertIn("whisperx_model", transcribe_properties)
-        self.assertNotIn("vibe_format", transcribe_properties)
-        self.assertNotIn("vibe_model", transcribe_properties)
+            self.assertEqual(set(schema.get("properties", {})), {"request"})
+            request_schema = schema["properties"]["request"]
+            self.assertIn("object", str(request_schema).casefold())
+
+        serialized = str(schemas).casefold()
+        for technical_name in (
+            "session_id",
+            "browser_mode",
+            "login_mode",
+            "scroll_pages",
+            "max_scroll_pages",
+            "selector_engine",
+        ):
+            self.assertNotIn(technical_name, serialized)
 
 
 if __name__ == "__main__":

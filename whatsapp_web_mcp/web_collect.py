@@ -122,7 +122,12 @@ def message_date(message: dict[str, Any]) -> dt.date | None:
 
 
 def infer_message_type(text: str, media: list[dict[str, Any]]) -> str:
-    labels = normalize_text(text)
+    media_labels = " ".join(
+        str(item.get(key) or "")
+        for item in media
+        for key in ("alt", "aria_label", "filename")
+    )
+    labels = normalize_text(f"{text} {media_labels}")
     media_kinds = {item.get("kind") for item in media}
     mime_values = " ".join(str(item.get("mimetype") or "") for item in media).casefold()
     if "video" in media_kinds or "video/" in mime_values:
@@ -701,19 +706,28 @@ async def extract_visible_messages(page: Any, limit: int = 100) -> list[dict[str
     raw_items = await page.evaluate(
         """
         (limit) => {
-          const selectors = [
-            '[data-testid="msg-container"]',
-            '#main [data-id]',
-            '#main [data-pre-plain-text]',
-            'div.message-in',
-            'div.message-out',
-            'div[class*="message-in"]',
-            'div[class*="message-out"]'
-          ];
-          const nodes = [];
-          for (const selector of selectors) {
-            for (const node of document.querySelectorAll(selector)) {
-              if (!nodes.includes(node)) nodes.push(node);
+          const root = document.querySelector('#main');
+          if (!root) return [];
+          let nodes = Array.from(root.querySelectorAll(
+            '[data-id][data-testid^="conv-msg-"]'
+          ));
+          if (!nodes.length) {
+            const candidates = Array.from(root.querySelectorAll(
+              '[data-testid="msg-container"], [data-id], [data-pre-plain-text], '
+              + 'div.message-in, div.message-out, '
+              + 'div[class*="message-in"], div[class*="message-out"]'
+            ));
+            const seen = new Set();
+            nodes = [];
+            for (const candidate of candidates) {
+              const node = candidate.closest(
+                '[data-id][data-testid^="conv-msg-"], '
+                + '.message-in, .message-out, '
+                + '[class*="message-in"], [class*="message-out"]'
+              ) || candidate;
+              if (seen.has(node)) continue;
+              seen.add(node);
+              nodes.push(node);
             }
           }
           return nodes.slice(-limit).map((node, index) => {
@@ -1201,6 +1215,97 @@ async def capture_inline_media(page: Any, messages: list[dict[str, Any]], out_di
                 media["downloaded_file"] = downloaded
 
 
+async def capture_inline_media_for_message(
+    page: Any,
+    out_dir: Path,
+    message: dict[str, Any],
+) -> list[dict[str, Any]]:
+    message_id = str(message.get("message_id") or "")
+    raw_media = await page.evaluate(
+        """
+        async ({messageId, domIndex, maxBytes}) => {
+          const root = document.querySelector('#main');
+          if (!root) return [];
+          const canonical = Array.from(root.querySelectorAll(
+            '[data-id][data-testid^="conv-msg-"]'
+          ));
+          const node = canonical.find((candidate) => candidate.getAttribute('data-id') === messageId)
+            || canonical[domIndex]
+            || null;
+          if (!node) return [];
+          const out = [];
+          const elements = Array.from(node.querySelectorAll('img, video, audio, source'));
+          for (const el of elements) {
+            const src = el.currentSrc || el.src || '';
+            if (!src || (!src.startsWith('blob:') && !src.startsWith('data:'))) continue;
+            try {
+              if (src.startsWith('data:')) {
+                out.push({
+                  src,
+                  data_url: src,
+                  mimetype: src.slice(5).split(';', 1)[0] || null
+                });
+                continue;
+              }
+              const response = await fetch(src);
+              const blob = await response.blob();
+              if (blob.size > maxBytes) {
+                out.push({
+                  src,
+                  skipped: 'too_large',
+                  size: blob.size,
+                  mimetype: blob.type || null
+                });
+                continue;
+              }
+              const dataUrl = await new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onloadend = () => resolve(reader.result);
+                reader.onerror = reject;
+                reader.readAsDataURL(blob);
+              });
+              out.push({
+                src,
+                data_url: dataUrl,
+                size: blob.size,
+                mimetype: blob.type || null
+              });
+            } catch (error) {
+              out.push({src, error: String(error)});
+            }
+          }
+          return out;
+        }
+        """,
+        {
+            "messageId": message_id,
+            "domIndex": message.get("dom_index"),
+            "maxBytes": MAX_INLINE_MEDIA_BYTES,
+        },
+    )
+    captures: list[dict[str, Any]] = []
+    for index, item in enumerate(raw_media or [], start=1):
+        downloaded = media_file_from_inline_item(item, out_dir, message_id, index)
+        if not downloaded:
+            continue
+        file_path = Path(downloaded)
+        body = file_path.read_bytes()
+        mimetype = item.get("mimetype") or "application/octet-stream"
+        captures.append(
+            {
+                "source": "message_scoped_inline_blob",
+                "trigger_message_id": message_id,
+                "trigger_message_type": message.get("type"),
+                "mimetype": mimetype,
+                "category": media_category_for_mimetype(mimetype),
+                "size_bytes": len(body),
+                "sha256": hashlib.sha256(body).hexdigest(),
+                "file_path": downloaded,
+            }
+        )
+    return captures
+
+
 def attach_captured_files_to_messages(messages: list[dict[str, Any]], captured_files: list[dict[str, Any]]) -> list[dict[str, Any]]:
     remaining = list(captured_files)
     for message in messages:
@@ -1210,13 +1315,18 @@ def attach_captured_files_to_messages(messages: list[dict[str, Any]], captured_f
         semantic = media.get("semantic_category")
         selected_index = None
         for index, captured in enumerate(remaining):
-            if captured.get("category") == semantic or semantic in {None, "document"}:
+            category = captured.get("category")
+            image_compatible = category == "image" and semantic in {"image", "sticker", "gif"}
+            if category == semantic or image_compatible or semantic in {None, "document"}:
                 selected_index = index
                 break
         if selected_index is None:
             continue
         captured = remaining.pop(selected_index)
         media["downloaded_file"] = captured.get("file_path")
+        media["mimetype"] = media.get("mimetype") or captured.get("mimetype")
+        if not media.get("filename") and captured.get("file_path"):
+            media["filename"] = Path(str(captured["file_path"])).name
         media["capture"] = captured
         items = media.get("items")
         if isinstance(items, list) and items:
@@ -1374,6 +1484,11 @@ async def capture_media_for_messages(
     for message in messages:
         media = message.get("media")
         if not isinstance(media, dict):
+            continue
+        inline = await capture_inline_media_for_message(page, out_dir, message)
+        inline_with_files = [item for item in inline if item.get("file_path")]
+        unassigned.extend(attach_captured_files_to_messages([message], inline_with_files))
+        if media.get("downloaded_file"):
             continue
         captured = await capture_network_media_for_message(page, out_dir, message)
         captures_with_files = [item for item in captured if item.get("file_path")]
