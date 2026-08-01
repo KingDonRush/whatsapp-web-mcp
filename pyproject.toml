@@ -20,7 +20,7 @@ classifiers = [
   "Programming Language :: Python :: 3.12",
 ]
 dependencies = [
-  "mcp>=1.27,<2",
+  "mcp>=1.27,<3",
   "playwright>=1.60,<2",
 ]
 
